@@ -47,8 +47,8 @@ Once the application is running, the overlay will display detected enemy locatio
 
 - **Text Display**: Show or hide the enemy position information on the screen.
 - **TTS Settings**: Control the volume, speech rate, and TTS voice.
-- **Hotkeys**: Configure hotkeys for toggling the display and the TTS system.
-
+- **Hotkeys**: Configure hotkeys for toggling the display and controlling TTS.
+  
 ### Key Hotkeys
 - **Toggle Text Display**: Set your preferred key (e.g., `F11`).
 - **Toggle Enemy Detection**: Set your preferred key (e.g., `F10`).
@@ -86,3 +86,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **OpenCV**: Used for image processing and minimap recognition.
 - **pyttsx3**: Used for text-to-speech conversion.
 - **mss**: Used for screen capturing in real-time.
+
+## Contact Information
+- Join the QQ group for discussions and support: **891346430**.
+- You can also check out the Bilibili channel of the creator by searching for **孤帆233**.
