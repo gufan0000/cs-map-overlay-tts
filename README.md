@@ -1,4 +1,3 @@
-```markdown
 # CS Map Overlay TTS
 
 A game overlay for **Counter-Strike (CS)** that detects enemy positions on the minimap and uses **text-to-speech (TTS)** to announce their locations in real-time. The overlay displays the detected positions on the screen, making it easier for players to react quickly.
