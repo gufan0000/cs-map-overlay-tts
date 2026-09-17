@@ -1,0 +1,52 @@
+name: Canonical Cologne 2025 archive
+on:
+  push:
+    branches: ['media/donk-archive-20260917']
+    paths: ['.github/workflows/donk-cologne-canonical-v2.yml']
+permissions:
+  contents: read
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - run: python -m pip install -q 'yt-dlp[default]' curl_cffi beautifulsoup4
+      - run: |
+          mkdir -p canonical/media canonical/proof
+          python - <<'PY'
+          from pathlib import Path
+          import re,json,html,subprocess,concurrent.futures,urllib.parse
+          from curl_cffi import requests
+          from bs4 import BeautifulSoup
+          P=Path('canonical');records=[];queue=[]
+          u='https://www.hltv.org/news/42382/spirit-sweep-mouz-to-claim-iem-cologne-trophy'
+          r=requests.get(u,impersonate='chrome',timeout=25);r.raise_for_status();s=BeautifulSoup(r.text,'html.parser');assert 'Spirit sweep MOUZ to claim IEM Cologne trophy' in s.title.text
+          (P/'proof'/'cologne_verified.html').write_text(r.text)
+          for i,im in enumerate([x for x in s.find_all('img') if 'image' in x.get('class',[]) and 'gallerypicture' in x.get('src','')][:3]):
+              urls=[x.strip().split()[0] for x in im.get('srcset','').split(',') if x.strip()];src=urls[-1] if urls else im['src'];r2=requests.get(src,impersonate='chrome',timeout=20);r2.raise_for_status();(P/'media'/f'cologne_{i}.jpg').write_bytes(r2.content);records.append({'id':f'cologne_{i}','article':u,'source_url':src})
+          # An article embeds the official ESL trophy and winning-round videos.
+          for u in ['https://e.sport.fr/resultats/team-spirit-soffre-liem-cologne-et-entre-dans-lhistoire-753891.shtm','https://culturageek.com.ar/team-spirit-es-el-nuevo-campeon-de-iem-cologne-en-counter-strike-2/']:
+              try:
+                  r=requests.get(u,impersonate='chrome',timeout=20);r.raise_for_status();t=html.unescape(r.text);(P/'proof'/(str(len(queue))+'_embed.html')).write_text(t)
+                  found=list(dict.fromkeys(re.findall(r'https?://(?:twitter.com|x.com)/ESLCS/status/\d+',t)))
+                  queue+=found
+              except Exception as e:records.append({'page':u,'error':str(e)})
+          queue=list(dict.fromkeys(queue))[:5]
+          def get(x):
+              n='cologne_x_'+str(queue.index(x));r={'id':n,'source_url':x}
+              try:
+                  p=subprocess.run(['yt-dlp','--no-playlist','--socket-timeout','15','--retries','1','--max-filesize','120M','-f','best','--write-info-json','-o',str(P/'media'/(n+'.%(ext)s')),x],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=180);(P/'proof'/f'{n}.log').write_text(p.stdout)
+                  if p.returncode:raise RuntimeError(p.stdout[-1200:])
+                  m=json.loads((P/'media'/(n+'.info.json')).read_text());r.update({k:m.get(k) for k in ['title','duration','width','height','upload_date','uploader']});r['status']='ok'
+              except Exception as e:r.update(status='error',error=str(e))
+              return r
+          with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:records+=list(pool.map(get,queue))
+          (P/'proof'/'sources.json').write_text(json.dumps(records,ensure_ascii=False,indent=2));print(json.dumps(records,ensure_ascii=False))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: donk-cologne-canonical-v2
+          path: canonical/
+          retention-days: 3
+          compression-level: 0
