@@ -1,0 +1,36 @@
+name: Alternate music phrase timing
+on:
+  push:
+    branches: ['media/donk-archive-20260917']
+    paths: ['.github/workflows/donk-alternate-phrases-v2.yml']
+permissions:
+  contents: read
+jobs:
+  timing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - run: python -m pip install -q 'yt-dlp[default]' faster-whisper
+      - name: Inspect phrase alignment
+        run: |
+          mkdir -p timing
+          yt-dlp --no-playlist --socket-timeout 18 --retries 1 -f bestaudio/best -o '/tmp/jianghu.%(ext)s' 'https://www.ganjingworld.com/video/1gircv539d478tbV71NAdelau1fs1c'
+          python - <<'PY'
+          from faster_whisper import WhisperModel
+          from pathlib import Path
+          import json
+          model=WhisperModel('small',device='cpu',compute_type='int8',cpu_threads=4)
+          src=next(p for p in Path('/tmp').glob('jianghu.*') if p.suffix in ['.m4a','.mp4','.mp3','.opus','.ogg'])
+          segments,info=model.transcribe(str(src),language='zh',beam_size=3,vad_filter=False,condition_on_previous_text=False,word_timestamps=True)
+          data=[]
+          for s in segments:
+              data.append({'start':s.start,'end':s.end,'text':s.text,'words':[{'start':w.start,'end':w.end,'word':w.word} for w in s.words]})
+          Path('timing/jianghu_phrases.json').write_text(json.dumps(data,ensure_ascii=False,indent=2))
+          print([(s['start'],s['end'],s['text']) for s in data])
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: alternate-music-phrases-v2
+          path: timing/
+          retention-days: 3
