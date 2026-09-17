@@ -1,0 +1,81 @@
+name: Donk native HD masters v2
+on:
+  push:
+    branches: ['media/donk-archive-20260917']
+    paths: ['.github/workflows/donk-hd-masters-v2.yml']
+permissions:
+  contents: read
+jobs:
+  masters:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [early, middle, late, game]
+    steps:
+      - name: Install
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          python -m pip install -q 'yt-dlp[default]' pillow
+      - name: Save native HD sources without 720p intermediate
+        env:
+          GROUP: ${{ matrix.group }}
+        run: |
+          mkdir -p masters proof
+          cat > /tmp/masters.py <<'PY'
+          import os,json,pathlib,subprocess,concurrent.futures
+          P=pathlib.Path('masters');Q=pathlib.Path('proof')
+          groups={
+          'early':[
+          ('01_kato_trophy','https://www.facebook.com/ESLCS/videos/team-spirit-lift-the-iem-katowice-2024-trophy-and-they-do-it-in-style/1592758408223927/'),
+          ('13_kato_desk','https://www.facebook.com/ESLCS/videos/donk-on-the-desk-freya-maniac-steel-spoke-with-donk-after-he-secure-a-spot-in-th/1042990173464866/')],
+          'middle':[
+          ('04_major_voice','https://www.facebook.com/teamspiritpage/videos/shanghai-major-2024-teamspeak-httpsyoutube5fgri5ffegk/1819738118763465/'),
+          ('07_chopper','https://www.facebook.com/teamspiritpage/videos/some-words-from-chopper-about-the-seriesspiritcs-blastpremier/840903274562511/'),
+          ('08_brothers_2025','https://www.facebook.com/teamspiritpage/videos/donk-sh1ro/1440634870542396/'),
+          ('09_kato_defeat','https://www.facebook.com/iem/videos/not-even-donk-could-stop-teamvitality-from-getting-to-the-iem-katowice-2025-trop/9961260950597185/'),
+          ('major_ceremony','https://twitter.com/CS_PerfectWorld/status/1868277421876945072')],
+          'late':[
+          ('11_porto_2026','https://www.facebook.com/teamspiritpage/videos/silence-the-blast-open-porto-2026-champions-are-talking-/1428018632759801/'),
+          ('12_porto_arrival','https://www.facebook.com/HLTV.org/videos/spirit-arrive-for-the-blast-open-porto-grand-final-/1543261264269198/')],
+          'game':[
+          ('heroic_1','https://clips.twitch.tv/UgliestAcceptableWasabiCclamChamp-eDlOHetB9OpgtNDI'),
+          ('major_final_0','https://clips.twitch.tv/SourBrainySeahorseOSfrog-6mVu2A7whbaK84wH'),
+          ('porto_final_1','https://clips.twitch.tv/CoweringHonorableZebraPoooound-qTpCV-j21kv2hAFT'),
+          ('porto_final_3','https://clips.twitch.tv/AdorableCarelessLampTooSpicy-aX6LN0U08Rn1M1-1')]}
+          def run(c,t=300):
+              p=subprocess.run(c,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=t)
+              if p.returncode:raise RuntimeError(p.stdout[-4000:])
+              return p.stdout
+          def get(x):
+              n,u=x;r={'id':n,'source_url':u}
+              try:
+                  log=run(['yt-dlp','--no-playlist','--socket-timeout','18','--retries','2','--fragment-retries','2','--max-filesize','650M','--write-info-json','-f','bv*[height<=2160]+ba/b[height<=2160]/best','--merge-output-format','mkv','-o',str(P/(n+'.%(ext)s')),u],480)
+                  (Q/f'{n}.log').write_text(log);m=json.loads((P/(n+'.info.json')).read_text());r.update({k:m.get(k) for k in ['title','duration','width','height','fps','format_id','uploader','upload_date']})
+                  r['formats']=[{k:f.get(k) for k in ['format_id','width','height','fps','tbr','vcodec','acodec','format_note']} for f in m.get('formats',[])]
+                  src=next(p for p in P.glob(n+'.*') if p.suffix in ['.mp4','.mkv','.webm'])
+                  r['probe']=json.loads(run(['ffprobe','-v','error','-show_streams','-show_format','-of','json',str(src)],30));r.update(status='ok',file=str(src),bytes=src.stat().st_size)
+                  # Thumbnails are review-only and never used as a render source.
+                  run(['ffmpeg','-v','error','-y','-i',str(src),'-vf','fps=1/10,scale=320:180:force_original_aspect_ratio=decrease,pad=320:180:(ow-iw)/2:(oh-ih)/2,tile=4x6','-frames:v','1',str(Q/f'{n}.jpg')],120)
+              except Exception as e:r.update(status='error',error=str(e))
+              print(json.dumps({k:r.get(k) for k in ['id','status','width','height','fps','bytes','error']},ensure_ascii=False),flush=True);return r
+          with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:records=list(pool.map(get,groups[os.environ['GROUP']]))
+          (Q/'sources.json').write_text(json.dumps(records,ensure_ascii=False,indent=2))
+          for p in P.glob('*.info.json'):p.unlink()
+          PY
+          python /tmp/masters.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: donk-hd-proof-${{ matrix.group }}
+          path: proof/
+          retention-days: 3
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: donk-hd-masters-${{ matrix.group }}
+          path: masters/
+          retention-days: 3
+          compression-level: 0
