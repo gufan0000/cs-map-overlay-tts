@@ -1,0 +1,64 @@
+name: Public reference supplement
+on:
+  push:
+    branches: ['media/donk-archive-20260917']
+    paths: ['.github/workflows/public-supplement.yml']
+permissions:
+  contents: read
+jobs:
+  supplement:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Install tools
+        run: |
+          python -m pip install -q 'yt-dlp[default]' curl_cffi pillow requests
+      - name: Fetch music and photographs
+        run: |
+          mkdir -p supplement/music supplement/stills supplement/proof
+          cat > /tmp/supplement.py <<'PY'
+          import requests,json,pathlib,subprocess,concurrent.futures
+          from curl_cffi import requests as cr
+          P=pathlib.Path('supplement');records=[]
+          session=requests.Session();session.headers.update({'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36','Referer':'https://www.bilibili.com/'})
+          def music(bv,n):
+              rec={'id':n,'bvid':bv}
+              try:
+                  r=session.get('https://api.bilibili.com/x/web-interface/view',params={'bvid':bv},timeout=25);r.raise_for_status();data=r.json();(P/'proof'/f'{n}_view.json').write_text(json.dumps(data,ensure_ascii=False));v=data['data'];cid=v['pages'][0]['cid'];rec.update(title=v['title'],duration=v['duration'],cid=cid)
+                  params={'bvid':bv,'cid':cid,'qn':32,'fnval':16,'fnver':0,'fourk':0}
+                  r=session.get('https://api.bilibili.com/x/player/playurl',params=params,timeout=25);r.raise_for_status();play=r.json();(P/'proof'/f'{n}_play.json').write_text(json.dumps(play,ensure_ascii=False));d=play['data']
+                  if d.get('dash') and d['dash'].get('audio'):
+                      a=max(d['dash']['audio'],key=lambda x:x.get('bandwidth',0));u=a.get('baseUrl') or a['base_url'];ext='m4a'
+                  else:u=d['durl'][0]['url'];ext='flv'
+                  r=session.get(u,timeout=90);r.raise_for_status();src=P/'music'/f'{n}.{ext}';src.write_bytes(r.content)
+                  if ext!='m4a':subprocess.run(['ffmpeg','-v','error','-y','-i',str(src),'-vn','-c:a','aac','-b:a','256k',str(P/'music'/f'{n}.m4a')],check=True)
+                  rec.update(status='ok',bytes=len(r.content))
+              except Exception as e:rec.update(status='error',error=str(e))
+              return rec
+          for bv,n in [('BV1XU6qYKEuH','buweixia_dj'),('BV1MMh4zDEGY','buweixia_slow')]:records.append(music(bv,n))
+          images=[
+          ('academy','https://img-cdn.hltv.org/gallerypicture/zwcBuSx0PdL0PEBz-FEZDt.jpg?auto=compress&ixlib=java-2.1.0&m=%2Fm.png&mw=107&mx=20&my=474&q=75&s=5164444ac4e5124d3661ddb276ecc101&w=800'),
+          ('academy_duo','https://img-cdn.hltv.org/gallerypicture/S9OM0vApbg7T6z1ksiP6yG.jpg?auto=compress&ixlib=java-2.1.0&m=%2Fm.png&mw=107&mx=20&my=474&q=75&s=f4878bbe190bccee4b1329fa65a5fe79&w=800'),
+          ('first_trophy','https://img-cdn.hltv.org/gallerypicture/8RkixH3kmJIai-d_zzngUS.jpg?auto=compress&ixlib=java-2.1.0&m=%2Fm.png&mw=213&mx=39&my=947&q=75&s=80f0150681448d295c946c10ff270605&w=1600'),
+          ('major_team','https://img-cdn.hltv.org/gallerypicture/cRwS4BEsQjy98Qe5Q97WBx.jpg?auto=compress&ixlib=java-2.1.0&m=%2Fm.png&mw=107&mx=20&my=473&q=75&s=b563463767017d0f2e6e2163ba2a8c61&w=800'),
+          ('major_trophy','https://img-cdn.hltv.org/gallerypicture/K-G8CCzpFD4-IxV7rMHg-w.jpg?ixlib=java-2.1.0&s=be3dec0af8ebbfdbe74205d3159d2a7f&w=1200'),
+          ('major_focus','https://oss.5eplay.com/editor/20241216/5812800ef77f353852317f53fb61b84f.png'),
+          ('major_mvp','https://kick-or-die.ru/app/uploads/2024/12/9jifh0a2xh1vongycnsszq.jpg'),
+          ('smile','https://metapress.com/wp-content/uploads/2025/04/Donk_CS2.jpg')]
+          def image(x):
+              n,u=x;r={'id':n,'url':u}
+              try:
+                  p=cr.get(u,impersonate='chrome',timeout=25);p.raise_for_status();(P/'stills'/f'{n}.jpg').write_bytes(p.content);r.update(status='ok',bytes=len(p.content))
+              except Exception as e:r.update(status='error',error=str(e))
+              return r
+          with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:records+=list(pool.map(image,images))
+          (P/'sources.json').write_text(json.dumps(records,ensure_ascii=False,indent=2));print(json.dumps(records,ensure_ascii=False))
+          PY
+          python /tmp/supplement.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: public-reference-supplement
+          path: supplement/
+          retention-days: 3
+          compression-level: 0
