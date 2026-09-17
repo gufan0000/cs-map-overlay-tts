@@ -1,0 +1,125 @@
+name: Public esports media archive
+on:
+  push:
+    branches: ['media/donk-archive-20260917']
+    paths: ['.github/workflows/public-media-archive.yml']
+permissions:
+  contents: read
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 28
+    steps:
+      - name: Install media tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          python -m pip install -q 'yt-dlp[default]' pillow requests
+      - name: Acquire public references
+        shell: bash
+        run: |
+          mkdir -p media review/sheets review/logs music /tmp/media
+          cat > /tmp/acquire.py <<'PY'
+          from pathlib import Path
+          from concurrent.futures import ThreadPoolExecutor,as_completed
+          from PIL import Image,ImageDraw
+          import json,subprocess,time,hashlib
+          sources=[
+          ('01_kato_trophy','https://www.facebook.com/ESLCS/videos/team-spirit-lift-the-iem-katowice-2024-trophy-and-they-do-it-in-style/1592758408223927/',240),
+          ('02_donk_sh1ro','https://www.facebook.com/teamspiritpage/videos/donk-sh1ro/968286562891571/',240),
+          ('03_major_clutch','https://www.facebook.com/HLTV.org/videos/a-1v5-at-a-major-only-a-few-pulled-that-off-and-donk-is-one-of-them-/1934849167163704/',240),
+          ('04_major_voice','https://www.facebook.com/teamspiritpage/videos/shanghai-major-2024-teamspeak-httpsyoutube5fgri5ffegk/1819738118763465/',360),
+          ('05_champions','https://www.facebook.com/teamspiritpage/videos/are-you-readythe-champions-vlog-is-here-httpsyoutubelh8tm5u-l0o/2119563368924835/',360),
+          ('06_dacha','https://www.facebook.com/teamspiritpage/videos/betboom-dacha-final-vlog-httpsyoutubek6mtck9a5f8/399444396567273/',240),
+          ('07_chopper','https://www.facebook.com/teamspiritpage/videos/some-words-from-chopper-about-the-seriesspiritcs-blastpremier/840903274562511/',240),
+          ('08_brothers_2025','https://www.facebook.com/teamspiritpage/videos/donk-sh1ro/1440634870542396/',240),
+          ('09_kato_defeat','https://www.facebook.com/iem/videos/not-even-donk-could-stop-teamvitality-from-getting-to-the-iem-katowice-2025-trop/9961260950597185/',240),
+          ('10_ewc_2026','https://www.facebook.com/teamspiritpage/videos/lets-recall-the-most-memorable-and-heartwarming-moments-from-the-ewc-2026-there-/1104523015597993/',360),
+          ('11_porto_2026','https://www.facebook.com/teamspiritpage/videos/silence-the-blast-open-porto-2026-champions-are-talking-/1428018632759801/',240),
+          ('12_porto_arrival','https://www.facebook.com/HLTV.org/videos/spirit-arrive-for-the-blast-open-porto-grand-final-/1543261264269198/',240),
+          ('13_kato_desk','https://www.facebook.com/ESLCS/videos/donk-on-the-desk-freya-maniac-steel-spoke-with-donk-after-he-secure-a-spot-in-th/1042990173464866/',240),
+          ('14_biography','https://www.youtube.com/watch?v=GAMxQ9IJ0AY',1200),
+          ('15_major_vlog','https://www.youtube.com/watch?v=LH8TM5u-L0o',1500),
+          ('16_major_voice_yt','https://www.youtube.com/watch?v=5FgRI5FFeGk',900),
+          ('music_buweixia','https://www.bilibili.com/video/BV1XU6qYKEuH/',600),
+          ('music_buweixia_alt','https://www.bilibili.com/video/BV1MMh4zDEGY/',600)]
+          def run(cmd,timeout=180):
+              p=subprocess.run(cmd,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=timeout)
+              if p.returncode: raise RuntimeError(p.stdout[-3500:])
+              return p.stdout
+          def get(x):
+              name,url,cap=x;record={'id':name,'source_url':url,'status':'error'}
+              try:
+                  fmt='bestaudio/best' if name.startswith('music') else 'bv*[height<=1080]+ba/b[height<=1080]/best'
+                  log=run(['yt-dlp','--no-playlist','--socket-timeout','15','--retries','1','--fragment-retries','1','--max-filesize','650M','--write-info-json','--merge-output-format','mp4','-f',fmt,'-o','/tmp/media/'+name+'.%(ext)s',url],240)
+                  Path('review/logs/'+name+'.log').write_text(log)
+                  meta=json.loads(Path('/tmp/media/'+name+'.info.json').read_text())
+                  record.update({k:meta.get(k) for k in ['title','description','uploader','upload_date','duration','webpage_url']})
+                  src=next(p for p in Path('/tmp/media').glob(name+'.*') if p.suffix in ['.mp4','.mkv','.webm','.m4a','.mp3','.flv','.aac','.ogg'])
+                  probe=json.loads(run(['ffprobe','-v','error','-show_format','-show_streams','-of','json',str(src)],30))
+                  d=min(float(probe['format']['duration']),cap)
+                  if name.startswith('music'):
+                      dst=Path('music/'+name+'.m4a')
+                      run(['ffmpeg','-v','error','-y','-i',str(src),'-t',str(d),'-vn','-c:a','aac','-b:a','256k',str(dst)],90)
+                  else:
+                      dst=Path('media/'+name+'.mp4')
+                      run(['ffmpeg','-v','error','-y','-i',str(src),'-t',str(d),'-map','0:v:0','-map','0:a?','-vf','scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1,fps=30','-c:v','libx264','-crf','21','-maxrate','2000k','-bufsize','4000k','-preset','veryfast','-threads','2','-c:a','aac','-b:a','128k','-movflags','+faststart',str(dst)],600)
+                      sheet=Image.new('RGB',(1280,1224),(10,10,10));draw=ImageDraw.Draw(sheet)
+                      for i in range(24):
+                          ts=(i+.4)*d/24;f=Path('/tmp/media/'+name+str(i)+'.jpg')
+                          run(['ffmpeg','-v','error','-y','-ss',str(ts),'-i',str(dst),'-frames:v','1','-vf','scale=320:180:force_original_aspect_ratio=decrease,pad=320:180:(ow-iw)/2:(oh-ih)/2',str(f)],30)
+                          if f.exists():sheet.paste(Image.open(f),(i%4*320,i//4*204));draw.text((i%4*320+5,i//4*204+182),f'{name} {ts:.2f}s',fill='white')
+                      sheet.save('review/sheets/'+name+'.jpg',quality=85)
+                  record.update(status='ok',file=str(dst),retained_duration=d,bytes=dst.stat().st_size,sha256=hashlib.sha256(dst.read_bytes()).hexdigest())
+              except Exception as e:record['error']=str(e);Path('review/logs/'+name+'.error.txt').write_text(str(e))
+              print(json.dumps({k:record.get(k) for k in ['id','status','title','retained_duration','error']},ensure_ascii=False),flush=True)
+              return record
+          records=[]
+          with ThreadPoolExecutor(max_workers=3) as pool:
+              for f in as_completed([pool.submit(get,x) for x in sources]):
+                  records.append(f.result());Path('review/sources.json').write_text(json.dumps(records,ensure_ascii=False,indent=2))
+          PY
+          python /tmp/acquire.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: public-reference-review
+          path: review/
+          retention-days: 3
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: public-reference-music
+          path: music/
+          retention-days: 3
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: public-reference-short-clips
+          path: |
+            media/0*.mp4
+            media/1[0-3]*.mp4
+          retention-days: 3
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: public-reference-biography
+          path: media/14*.mp4
+          retention-days: 3
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: public-reference-vlog
+          path: media/15*.mp4
+          retention-days: 3
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: public-reference-teamspeak
+          path: media/16*.mp4
+          retention-days: 3
+          compression-level: 0
