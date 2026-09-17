@@ -1,0 +1,73 @@
+name: Selected final edit assets
+on:
+  push:
+    branches: ['media/donk-archive-20260917']
+    paths: ['.github/workflows/public-final-assets.yml']
+permissions:
+  contents: read
+jobs:
+  assets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Install media tools
+        run: |
+          python -m pip install -q 'yt-dlp[default]' curl_cffi pillow requests
+      - name: Fetch selected sources
+        run: |
+          mkdir -p assets/media assets/music assets/stills assets/proof /tmp/final
+          cat > /tmp/final_assets.py <<'PY'
+          from pathlib import Path
+          from concurrent.futures import ThreadPoolExecutor,as_completed
+          import subprocess,json,re,html
+          from PIL import Image,ImageDraw
+          from curl_cffi import requests
+          P=Path('assets');R=Path('/tmp/final');records=[]
+          def run(c,t=240):
+              p=subprocess.run(c,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=t)
+              if p.returncode:raise RuntimeError(p.stdout[-3500:])
+              return p.stdout
+          sources=[('music_buweixia','https://soundcloud.com/fendy-ghazali/dj-1'),('17_major_ceremony','https://twitter.com/CS_PerfectWorld/status/1868277421876945072'),('18_major_voice','https://www.youtube.com/watch?v=5FgRI5Ffegk')]
+          def get(x):
+              n,u=x;r={'id':n,'source_url':u}
+              try:
+                  fmt='bestaudio/best' if n.startswith('music') else 'bv*[height<=1080]+ba/b[height<=1080]/best'
+                  log=run(['yt-dlp','--no-playlist','--socket-timeout','18','--retries','1','--fragment-retries','1','--max-filesize','400M','--write-info-json','--merge-output-format','mp4','-f',fmt,'-o',str(R/(n+'.%(ext)s')),u],300)
+                  (P/'proof'/f'{n}.log').write_text(log)
+                  m=json.loads((R/(n+'.info.json')).read_text());r.update({k:m.get(k) for k in ['title','description','upload_date','duration','uploader']})
+                  src=next(p for p in R.glob(n+'.*') if p.suffix in ['.mp4','.mkv','.webm','.mp3','.m4a','.ogg','.opus'])
+                  dst=P/('music' if n.startswith('music') else 'media')/(n+('.m4a' if n.startswith('music') else '.mp4'))
+                  if n.startswith('music'):run(['ffmpeg','-v','error','-y','-i',str(src),'-vn','-c:a','aac','-b:a','256k',str(dst)],180)
+                  else:
+                      run(['ffmpeg','-v','error','-y','-i',str(src),'-t','600','-vf','scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1,fps=30','-c:v','libx264','-crf','20','-preset','veryfast','-threads','2','-c:a','aac','-b:a','128k',str(dst)],500)
+                      d=float(run(['ffprobe','-v','error','-show_entries','format=duration','-of','csv=p=0',str(dst)]).strip());sheet=Image.new('RGB',(1280,1224));draw=ImageDraw.Draw(sheet)
+                      for i in range(24):
+                          ts=(i+.3)*d/24;f=R/f'{n}{i}.jpg'
+                          run(['ffmpeg','-v','error','-y','-ss',str(ts),'-i',str(dst),'-frames:v','1','-vf','scale=320:180:force_original_aspect_ratio=decrease,pad=320:180:(ow-iw)/2:(oh-ih)/2',str(f)],30)
+                          if f.exists():sheet.paste(Image.open(f),(i%4*320,i//4*204));draw.text((i%4*320+5,i//4*204+183),f'{n} {ts:.2f}s',fill='white')
+                      sheet.save(P/'proof'/f'{n}.jpg')
+                  r.update(status='ok',bytes=dst.stat().st_size)
+              except Exception as e:r.update(status='error',error=str(e))
+              return r
+          with ThreadPoolExecutor(max_workers=3) as pool:
+              for f in as_completed([pool.submit(get,x) for x in sources]):records.append(f.result())
+          pages=[('magixx_bench','https://www.hltv.org/news/42122/official-spirit-bench-magixx'),('return','https://www.hltv.org/news/43475/magixx-and-zont1x-return-to-spirit-roster-as-chopper-and-zweih-are-benched'),('chopper_break','https://www.hltv.org/news/43478/chopper-announces-break-from-competition-following-spirit-benching'),('colgone','https://www.hltv.org/news/42403/spirit-sweep-mouz-to-claim-iem-cologne-trophy')]
+          for n,u in pages:
+              try:
+                  r=requests.get(u,impersonate='chrome',timeout=20);r.raise_for_status();text=r.text;(P/'proof'/f'{n}.html').write_text(text)
+                  urls=list(dict.fromkeys(html.unescape(s) for s in re.findall(r'https://img-cdn\.hltv\.org/(?:gallerypicture|gallery)/[^\s\"<>]+',text)))[:6]
+                  for i,u2 in enumerate(urls):
+                      try:
+                          im=requests.get(u2,impersonate='chrome',timeout=15);im.raise_for_status();(P/'stills'/f'{n}_{i}.jpg').write_bytes(im.content);records.append({'id':f'{n}_{i}','source_url':u2,'article':u,'status':'ok'})
+                      except Exception as e:records.append({'id':f'{n}_{i}','error':str(e)})
+              except Exception as e:records.append({'id':n,'source_url':u,'error':str(e)})
+          (P/'sources.json').write_text(json.dumps(records,ensure_ascii=False,indent=2));print(json.dumps(records,ensure_ascii=False))
+          PY
+          python /tmp/final_assets.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: selected-final-assets
+          path: assets/
+          retention-days: 3
+          compression-level: 0
