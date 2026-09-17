@@ -1,0 +1,50 @@
+name: Landscape 2025 broadcast references
+on:
+  push:
+    branches: ['media/donk-archive-20260917']
+    paths: ['.github/workflows/donk-wide-2025-v2.yml']
+permissions:
+  contents: read
+jobs:
+  wide:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - run: python -m pip install -q 'yt-dlp[default]' curl_cffi
+      - run: |
+          mkdir -p wide/proof wide/media
+          python - <<'PY'
+          from pathlib import Path
+          import re,json,html,subprocess,concurrent.futures,urllib.parse
+          from curl_cffi import requests
+          P=Path('wide');queue=[];records=[]
+          for n,u in [('kato25','https://www.hltv.org/news/40960/vitality-sweep-spirit-to-win-iem-katowice-2025'),('cologne25','https://www.hltv.org/news/42403/spirit-sweep-mouz-to-claim-iem-cologne-trophy')]:
+              try:
+                  r=requests.get(u,impersonate='chrome',timeout=20);r.raise_for_status();text=html.unescape(r.text);(P/'proof'/f'{n}.html').write_text(text)
+                  clips=[]
+                  for x in re.findall(r'https?://[^\s\"<>]+',text):
+                      if 'clips.twitch.tv/embed' in x:
+                          slug=urllib.parse.parse_qs(urllib.parse.urlparse(x).query).get('clip',[''])[0]
+                          if slug:clips.append('https://clips.twitch.tv/'+slug)
+                      elif 'clips.twitch.tv/' in x:clips.append(x.split('?')[0])
+                  for i,u2 in enumerate(list(dict.fromkeys(clips))[:5]):queue.append((n+'_'+str(i),u2))
+              except Exception as e:records.append({'page':u,'error':str(e)})
+          def get(x):
+              n,u=x;r={'id':n,'url':u}
+              try:
+                  p=subprocess.run(['yt-dlp','--no-playlist','--socket-timeout','15','--retries','1','--max-filesize','120M','-f','best','--write-info-json','-o',str(P/'media'/(n+'.%(ext)s')),u],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=180)
+                  (P/'proof'/f'{n}.log').write_text(p.stdout)
+                  if p.returncode:raise RuntimeError(p.stdout[-2000:])
+                  m=json.loads((P/'media'/(n+'.info.json')).read_text());r.update({k:m.get(k) for k in ['title','duration','width','height','fps','uploader']});r['status']='ok'
+              except Exception as e:r.update(status='error',error=str(e))
+              return r
+          with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:records+=list(pool.map(get,queue))
+          (P/'proof'/'sources.json').write_text(json.dumps(records,ensure_ascii=False,indent=2));print(json.dumps(records,ensure_ascii=False))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: donk-wide-2025-v2
+          path: wide/
+          retention-days: 3
+          compression-level: 0
