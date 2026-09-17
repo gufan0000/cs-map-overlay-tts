@@ -1,0 +1,84 @@
+name: Donk verified broadcast supplement
+on:
+  push:
+    branches: ['media/donk-archive-20260917']
+    paths: ['.github/workflows/donk-verified-supplement.yml']
+permissions:
+  contents: read
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - name: Install
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          python -m pip install -q 'yt-dlp[default]' curl_cffi pillow
+      - name: Get verified embedded clips
+        run: |
+          mkdir -p extra/media extra/proof extra/stills /tmp/donkextra
+          cat > /tmp/getextra.py <<'PY'
+          import re,html,json,subprocess,pathlib,concurrent.futures,urllib.parse
+          from curl_cffi import requests
+          from PIL import Image,ImageDraw
+          P=pathlib.Path('extra');R=pathlib.Path('/tmp/donkextra');records=[];queue=[]
+          pages=[('heroic','https://www.hltv.org/news/40512/donk-lifts-spirit-to-shanghai-major-playoffs'),('major_final','https://www.hltv.org/news/40565/spirit-defeat-faze-2-1-to-win-shanghai-major'),('porto_final','https://www.hltv.org/news/45467/spirit-take-down-mouz-for-blast-open-porto-title'),('vlog','https://cslabez.com/team-spirit-shanghai-major-vlog/'),('major_ace','https://escorenews.com/en/csgo/news/64553-donk-s-four-aces-at-shanghai-major-make-new-record-in-cs-history')]
+          for n,u in pages:
+              try:
+                  p=requests.get(u,impersonate='chrome',timeout=25);p.raise_for_status();t=html.unescape(p.text);(P/'proof'/f'{n}.html').write_text(t)
+                  clips=[]
+                  for x in re.findall(r'https?://[^\s\"<>]+',t):
+                      x=x.replace('\\/','/')
+                      if 'clips.twitch.tv/embed' in x:
+                          slug=urllib.parse.parse_qs(urllib.parse.urlparse(x).query).get('clip',[''])[0]
+                          if slug:clips.append('https://clips.twitch.tv/'+slug)
+                      elif 'clips.twitch.tv/' in x:clips.append(x.split('?')[0])
+                      elif re.search(r'(?:twitter.com|x.com)/[^/]+/status/\d+',x):clips.append(re.search(r'https?://(?:twitter.com|x.com)/[^/]+/status/\d+',x).group(0))
+                      elif n=='vlog' and ('youtube.com/embed/' in x or 'youtube-nocookie.com/embed/' in x):clips.append('https://www.youtube.com/watch?v='+x.split('/embed/')[1].split('?')[0])
+                  clips=list(dict.fromkeys(clips))[:5];records.append({'page':u,'id':n,'clips':clips})
+                  queue += [(n+'_'+str(i),x) for i,x in enumerate(clips)]
+                  imgs=list(dict.fromkeys(re.findall(r'https://img-cdn\.hltv\.org/gallerypicture/[^\s\"<>]+',t)))
+                  if imgs:
+                      im=requests.get(imgs[0],impersonate='chrome',timeout=20);im.raise_for_status();(P/'stills'/f'{n}.jpg').write_bytes(im.content)
+              except Exception as e:records.append({'page':u,'error':str(e)})
+          queue += [('early_huya','https://www.huya.com/video/play/1028044924.html')]
+          def run(c,t=240):
+              p=subprocess.run(c,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=t)
+              if p.returncode:raise RuntimeError(p.stdout[-2200:])
+              return p.stdout
+          def get(x):
+              n,u=x;r={'id':n,'url':u}
+              try:
+                  log=run(['yt-dlp','--no-playlist','--socket-timeout','12','--retries','1','--fragment-retries','1','--max-filesize','500M','--write-info-json','-f','bv*[height<=720]+ba/b[height<=720]/best','--merge-output-format','mp4','-o',str(R/(n+'.%(ext)s')),u],240)
+                  (P/'proof'/f'{n}.log').write_text(log);m=json.loads((R/(n+'.info.json')).read_text());r.update({k:m.get(k) for k in ['title','duration','upload_date','uploader','webpage_url']})
+                  src=next(p for p in R.glob(n+'.*') if p.suffix in ['.mp4','.webm','.mkv','.flv']);d=min(float(m.get('duration') or 180),300)
+                  dst=P/'media'/f'{n}.mp4';run(['ffmpeg','-v','error','-y','-i',str(src),'-t',str(d),'-vf','scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1,fps=30','-c:v','libx264','-crf','21','-preset','veryfast','-threads','2','-c:a','aac','-b:a','128k',str(dst)],420)
+                  sh=Image.new('RGB',(1280,816));dr=ImageDraw.Draw(sh)
+                  for i in range(16):
+                      ts=(i+.2)*d/16;f=R/f'{n}-{i}.jpg';run(['ffmpeg','-v','error','-y','-ss',str(ts),'-i',str(dst),'-frames:v','1','-vf','scale=320:180:force_original_aspect_ratio=decrease,pad=320:180:(ow-iw)/2:(oh-ih)/2',str(f)],30)
+                      if f.exists():sh.paste(Image.open(f),(i%4*320,i//4*204));dr.text((i%4*320+5,i//4*204+183),f'{n} {ts:.2f}s',fill='white')
+                  sh.save(P/'proof'/f'{n}.jpg');r.update(status='ok',retained_duration=d)
+              except Exception as e:r.update(status='error',error=str(e))
+              print(json.dumps(r,ensure_ascii=False),flush=True);return r
+          with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+              for f in concurrent.futures.as_completed([pool.submit(get,x) for x in queue]):records.append(f.result());(P/'sources.json').write_text(json.dumps(records,ensure_ascii=False,indent=2))
+          (P/'sources.json').write_text(json.dumps(records,ensure_ascii=False,indent=2))
+          PY
+          python /tmp/getextra.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: donk-extra-proof
+          path: |
+            extra/proof/
+            extra/sources.json
+            extra/stills/
+          retention-days: 3
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: donk-extra-media
+          path: extra/media/
+          retention-days: 3
+          compression-level: 0
