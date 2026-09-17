@@ -1,0 +1,56 @@
+name: Public archival stills
+on:
+  push:
+    branches: ['media/donk-archive-20260917']
+    paths: ['.github/workflows/public-stills.yml']
+permissions:
+  contents: read
+jobs:
+  stills:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Fetch public photographs
+        run: |
+          mkdir -p stills
+          python - <<'PY'
+          import urllib.request,urllib.parse,html,re,json,pathlib,concurrent.futures
+          root=pathlib.Path('stills');records=[]
+          direct=[
+          ('academy_01','https://img-cdn.hltv.org/gallerypicture/zwcBuSx0PdL0PEBz-FEZDt.jpg?auto=compress&ixlib=java-2.1.0&m=%2Fm.png&mw=107&mx=20&my=474&q=75&s=5164444ac4e5124d3661ddb276ecc101&w=800'),
+          ('academy_02','https://img-cdn.hltv.org/gallerypicture/S9OM0vApbg7T6z1ksiP6yG.jpg?auto=compress&ixlib=java-2.1.0&m=%2Fm.png&mw=107&mx=20&my=474&q=75&s=f4878bbe190bccee4b1329fa65a5fe79&w=800'),
+          ('first_lan','https://img-cdn.hltv.org/gallerypicture/8RkixH3kmJIai-d_zzngUS.jpg?auto=compress&ixlib=java-2.1.0&m=%2Fm.png&mw=107&mx=20&my=473&q=75&s=a4f0fb27ba770d6fec178411733c0536&w=800'),
+          ('major_team','https://img-cdn.hltv.org/gallerypicture/cRwS4BEsQjy98Qe5Q97WBx.jpg?auto=compress&ixlib=java-2.1.0&m=%2Fm.png&mw=107&mx=20&my=473&q=75&s=b563463767017d0f2e6e2163ba2a8c61&w=800'),
+          ('major_trophy','https://img-cdn.hltv.org/gallerypicture/K-G8CCzpFD4-IxV7rMHg-w.jpg?ixlib=java-2.1.0&s=be3dec0af8ebbfdbe74205d3159d2a7f&w=1200')]
+          pages=[
+          ('career','https://www.hltv.org/news/40745/top-20-players-of-2024-donk-1'),
+          ('magixx_bench','https://www.hltv.org/news/42122/official-spirit-bench-magixx'),
+          ('return','https://www.hltv.org/news/43475/magixx-and-zont1x-return-to-spirit-roster-as-chopper-and-zweih-are-benched'),
+          ('chopper_break','https://www.hltv.org/news/43478/chopper-announces-break-from-competition-following-spirit-benching'),
+          ('porto','https://www.hltv.org/news/45467/spirit-take-down-mouz-for-blast-open-porto-title'),
+          ('porto_mvp','https://www.hltv.org/news/45470/donk-goes-back-to-back-with-blast-open-porto-mvp')]
+          def fetch(url):
+              req=urllib.request.Request(url,headers={'User-Agent':'Mozilla/5.0','Referer':'https://www.hltv.org/'})
+              return urllib.request.urlopen(req,timeout=25).read()
+          for n,u in pages:
+              try:
+                  text=fetch(u).decode();(root/(n+'.html')).write_text(text)
+                  urls=list(dict.fromkeys(html.unescape(x) for x in re.findall(r'(https://img-cdn\.hltv\.org/(?:gallerypicture|gallery)/[^\s\"<>]+)',text)))[:14]
+                  for i,x in enumerate(urls):direct.append((n+'_'+str(i),x))
+                  records.append({'id':n,'source':u,'found':len(urls)})
+              except Exception as e:records.append({'id':n,'source':u,'error':str(e)})
+          def get(x):
+              n,u=x
+              try:
+                  b=fetch(u);(root/(n+'.jpg')).write_bytes(b);return {'id':n,'source':u,'bytes':len(b)}
+              except Exception as e:return {'id':n,'source':u,'error':str(e)}
+          with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:records+=list(pool.map(get,direct))
+          (root/'sources.json').write_text(json.dumps(records,ensure_ascii=False,indent=2))
+          print(json.dumps(records,ensure_ascii=False))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: public-archival-stills
+          path: stills/
+          retention-days: 3
