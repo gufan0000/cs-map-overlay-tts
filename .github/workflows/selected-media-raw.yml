@@ -1,0 +1,25 @@
+name: Selected raw media
+on:
+  push:
+    branches: ['media/donk-archive-20260917']
+    paths: ['.github/workflows/selected-media-raw.yml']
+permissions:
+  contents: read
+jobs:
+  raw:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - run: python -m pip install -q 'yt-dlp[default]'
+      - name: Save public sources
+        run: |
+          mkdir -p selected
+          yt-dlp --no-playlist --socket-timeout 20 --retries 1 -f bestaudio/best --write-info-json -o 'selected/buweixia.%(ext)s' 'https://soundcloud.com/fendy-ghazali/dj-1'
+          yt-dlp --no-playlist --socket-timeout 20 --retries 1 -f best --write-info-json -o 'selected/major_ceremony.%(ext)s' 'https://twitter.com/CS_PerfectWorld/status/1868277421876945072'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: selected-raw-media
+          path: selected/
+          retention-days: 3
+          compression-level: 0
