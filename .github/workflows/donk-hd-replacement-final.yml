@@ -1,0 +1,57 @@
+name: Donk replacement camera masters
+on:
+  push:
+    branches: ['media/donk-archive-20260917']
+    paths: ['.github/workflows/donk-hd-replacement-final.yml']
+permissions:
+  contents: read
+jobs:
+  replacement:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          python -m pip install -q 'yt-dlp[default]' curl_cffi pillow beautifulsoup4
+      - name: Acquire native source files
+        run: |
+          mkdir -p replacement/media replacement/music replacement/proof
+          cat > /tmp/replacement.py <<'PY'
+          from pathlib import Path
+          import json,subprocess,concurrent.futures
+          from curl_cffi import requests
+          from bs4 import BeautifulSoup
+          from PIL import Image,ImageDraw
+          P=Path('replacement');records=[]
+          src=[('kato_trophy_x','https://twitter.com/ESLCS/status/1756756791839338607'),('kato_interview_x','https://twitter.com/ESLCS/status/1756757960930332857'),('kato25_final_x','https://twitter.com/ESLCS/status/1888677152926703673'),('music_jianghu_dj','https://www.ganjingworld.com/video/1gircv539d478tbV71NAdelau1fs1c'),('music_guanshan_dj','https://soundcloud.com/ng-hiu-2023036/quan-s-n-t-u-dj')]
+          def run(c,t=200):
+              p=subprocess.run(c,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=t)
+              if p.returncode:raise RuntimeError(p.stdout[-3000:])
+              return p.stdout
+          def get(x):
+              n,u=x;rec={'id':n,'source_url':u};dst=P/('music' if n.startswith('music') else 'media')
+              try:
+                  fmt='bestaudio/best' if n.startswith('music') else 'bv*[height<=2160]+ba/b[height<=2160]/best'
+                  log=run(['yt-dlp','--no-playlist','--socket-timeout','15','--retries','1','--fragment-retries','1','--max-filesize','400M','--write-info-json','--merge-output-format','mkv','-f',fmt,'-o',str(dst/(n+'.%(ext)s')),u],240);(P/'proof'/f'{n}.log').write_text(log)
+                  m=json.loads((dst/(n+'.info.json')).read_text());rec.update({k:m.get(k) for k in ['title','duration','width','height','fps','uploader','upload_date']});rec['status']='ok'
+              except Exception as e:rec.update(status='error',error=str(e))
+              print(json.dumps(rec,ensure_ascii=False),flush=True);return rec
+          with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:records=list(pool.map(get,src))
+          (P/'proof'/'sources.json').write_text(json.dumps(records,ensure_ascii=False,indent=2))
+          for f in (P/'media').glob('*.info.json'):f.unlink()
+          # Get one dated 2025 group photograph for replacing the SD friendship shot.
+          try:
+              url='https://www.hltv.org/news/42403/spirit-sweep-mouz-to-claim-iem-cologne-trophy';r=requests.get(url,impersonate='chrome',timeout=25);r.raise_for_status();s=BeautifulSoup(r.text,'html.parser');(P/'proof'/'cologne.html').write_text(r.text)
+              for i,im in enumerate([x for x in s.find_all('img') if 'image' in x.get('class',[]) and 'gallerypicture' in x.get('src','')][:3]):
+                  urls=[x.strip().split()[0] for x in im.get('srcset','').split(',') if x.strip()];u=urls[-1] if urls else im['src'];imr=requests.get(u,impersonate='chrome',timeout=20);imr.raise_for_status();(P/'media'/f'cologne_{i}.jpg').write_bytes(imr.content)
+          except Exception as e:(P/'proof'/'cologne_error.txt').write_text(str(e))
+          PY
+          python /tmp/replacement.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: donk-replacement-masters
+          path: replacement/
+          retention-days: 3
+          compression-level: 0
