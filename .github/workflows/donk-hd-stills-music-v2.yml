@@ -1,0 +1,96 @@
+name: Donk archival image masters and music audition
+on:
+  push:
+    branches: ['media/donk-archive-20260917']
+    paths: ['.github/workflows/donk-hd-stills-music-v2.yml']
+permissions:
+  contents: read
+jobs:
+  assets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          python -m pip install -q 'yt-dlp[default]' curl_cffi beautifulsoup4 pillow
+      - name: Large stills and audio candidates
+        run: |
+          mkdir -p image_masters music_candidates proof
+          cat > /tmp/assets.py <<'PY'
+          from pathlib import Path
+          import re,html,json,subprocess,concurrent.futures,urllib.parse,io
+          from curl_cffi import requests
+          from bs4 import BeautifulSoup
+          from PIL import Image
+          P=Path('image_masters');Q=Path('proof');records=[]
+          pages=[
+          ('career','https://www.hltv.org/news/40745/top-20-players-of-2024-donk-1'),
+          ('heroic','https://www.hltv.org/news/40512/donk-lifts-spirit-to-shanghai-major-playoffs'),
+          ('major_final','https://www.hltv.org/news/40565/spirit-defeat-faze-2-1-to-win-shanghai-major'),
+          ('magixx_bench','https://www.hltv.org/news/42122/official-spirit-bench-magixx'),
+          ('chopper_break','https://www.hltv.org/news/43478/chopper-announces-break-from-competition-following-spirit-benching'),
+          ('return','https://www.hltv.org/news/43475/magixx-and-zont1x-return-to-spirit-roster-as-chopper-and-zweih-are-benched'),
+          ('porto','https://www.hltv.org/news/45467/spirit-take-down-mouz-for-blast-open-porto-title'),
+          ('kato2025','https://www.hltv.org/news/40960/vitality-sweep-spirit-to-win-iem-katowice-2025')]
+          def page(item):
+              n,u=item;rec=[]
+              try:
+                  r=requests.get(u,impersonate='chrome',timeout=25);r.raise_for_status();s=BeautifulSoup(r.text,'html.parser');(Q/f'{n}.html').write_text(r.text)
+                  ims=[i for i in s.find_all('img') if 'gallerypicture' in i.get('src','') and 'image' in i.get('class',[])]
+                  for i,im in enumerate(ims[:15]):
+                      urls=[im.get('src',''),im.get('data-image-overlay','')]+[x.strip().split()[0] for x in im.get('srcset','').split(',') if x.strip()]
+                      urls=sorted(set(x for x in urls if x),key=lambda x:int(urllib.parse.parse_qs(urllib.parse.urlparse(x).query).get('w',['0'])[0]),reverse=True)
+                      for v in urls:
+                          try:
+                              r=requests.get(v,impersonate='chrome',timeout=20);r.raise_for_status();image=Image.open(io.BytesIO(r.content));id=urllib.parse.urlparse(v).path.split('/')[-1];(P/id).write_bytes(r.content);rec.append({'article':u,'id':n+'_'+str(i),'url':v,'file':id,'width':image.width,'height':image.height});break
+                          except Exception:continue
+              except Exception as e:rec.append({'article':u,'error':str(e)})
+              return rec
+          with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+              for part in pool.map(page,pages):records+=part
+          (Q/'images.json').write_text(json.dumps(records,ensure_ascii=False,indent=2))
+          def run(c,t=200):
+              p=subprocess.run(c,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,timeout=t)
+              if p.returncode:raise RuntimeError(p.stderr[-2000:])
+              return p.stdout
+          candidates=[]
+          for query in ['江湖之间 DJ','关山酒 DJ名龙','天涯 DJ']:
+              try:
+                  out=run(['yt-dlp','--flat-playlist','--dump-json','--socket-timeout','20','--retries','1','scsearch6:'+query],100)
+                  found=[json.loads(x) for x in out.splitlines() if x.strip().startswith('{')];(Q/(str(len(candidates))+'_search.json')).write_text(json.dumps(found,ensure_ascii=False,indent=2))
+                  for f in found[:3]:
+                      url=f.get('webpage_url') or f.get('url');title=f.get('title','');dur=f.get('duration') or 0
+                      if url and not any(url==z[1] for z in candidates) and 100<dur<600:candidates.append((query,url,title))
+              except Exception as e:(Q/(query+'_error.txt')).write_text(str(e))
+          # Exact DJ recording candidate; use normal public download path.
+          candidates.append(('jianghu_bili','https://www.bilibili.com/video/BV1PbjgzwEor/','江湖之间 DJ名龙版'))
+          def music(x):
+              q,u,title=x;n=str(candidates.index(x))+'_'+('jianghu' if ('江湖' in q or 'jianghu' in q) else ('guanshan' if '关山' in q else 'tianya'));r={'id':n,'query':q,'url':u,'search_title':title}
+              try:
+                  log=run(['yt-dlp','--no-playlist','--socket-timeout','15','--retries','1','--write-info-json','-f','bestaudio/best','-o','music_candidates/'+n+'.%(ext)s',u],180);(Q/(n+'.log')).write_text(log);meta=json.loads(Path('music_candidates/'+n+'.info.json').read_text());r.update({k:meta.get(k) for k in ['title','duration','uploader','upload_date']});r['status']='ok'
+              except Exception as e:r.update(status='error',error=str(e))
+              return r
+          with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:mus=list(pool.map(music,candidates))
+          (Q/'music_sources.json').write_text(json.dumps(mus,ensure_ascii=False,indent=2));print(json.dumps(mus,ensure_ascii=False))
+          PY
+          python /tmp/assets.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: donk-hd-images-v2
+          path: image_masters/
+          retention-days: 3
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: donk-music-audition-v2
+          path: music_candidates/
+          retention-days: 3
+          compression-level: 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: donk-image-music-proof-v2
+          path: proof/
+          retention-days: 3
